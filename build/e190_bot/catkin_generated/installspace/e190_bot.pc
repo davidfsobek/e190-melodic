@@ -1,0 +1,8 @@
+prefix=/home/dsobek/Projects/e190melodic_ws/install
+
+Name: e190_bot
+Description: Description of e190_bot
+Version: 0.0.0
+Cflags: -I/home/dsobek/Projects/e190melodic_ws/install/include
+Libs: -L/home/dsobek/Projects/e190melodic_ws/install/lib 
+Requires: geometry_msgs roscpp rospy std_msgs message_runtime
