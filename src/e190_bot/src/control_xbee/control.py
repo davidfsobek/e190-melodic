@@ -4,11 +4,10 @@ import rospkg
 from xbee import XBee
 import serial
 import tf
-import math
+import math # for trig functions
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from e190_bot.msg import ir_sensor
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 
 rospack = rospkg.RosPack()
@@ -40,9 +39,6 @@ class botControl:
         print("Xbee setup successful")
         self.address = '\x00\x0C'#you may use this to communicate with multiple bots
 
-        # Configure IR sensors
-        self.ir_init()
-
         #init an odometry instance, and configure odometry info
         self.odom_init()
 
@@ -55,9 +51,9 @@ class botControl:
 
         self.pubOdom = rospy.Publisher('/odom', Odometry, queue_size=10)
 
-        self.pubDistL = rospy.Publisher('/distL', ir_sensor, queue_size=10)
-        self.pubDistC = rospy.Publisher('/distC', ir_sensor, queue_size=10)
-        self.pubDistR = rospy.Publisher('/distR', ir_sensor, queue_size=10)
+        #self.pubDistL = rospy.Publisher('/distL', ir_sensor, queue_size=10)
+        #self.pubDistC = rospy.Publisher('/distC', ir_sensor, queue_size=10)
+        #self.pubDistR = rospy.Publisher('/distR', ir_sensor, queue_size=10)
         self.time = rospy.Time.now()
         self.count = 0;
 
@@ -67,11 +63,10 @@ class botControl:
             self.odom_pub();
             self.rate.sleep();
 
-    def ir_init(self):
-        """Initializes ir sensor messages for the three sensors on our bot."""
-        self.ir_L = ir_sensor()
-        self.ir_C = ir_sensor()
-        self.ir_R = ir_sensor()
+    # def ir_init(self):
+    #     self.ir_L = ir_sensor()
+    #     self.ir_C = ir_sensor()
+    #     self.ir_R = ir_sensor()
 
     def odom_init(self):
         """Initializes the odometer variables for distance measurements."""
@@ -79,6 +74,9 @@ class botControl:
         self.Odom.header.frame_id = "/odom"
         self.Odom.child_frame_id = "/base_link"
         self.odom_broadcaster = tf.TransformBroadcaster()
+        self.irF_static_broadcaster = tf.TransformBroadcaster()
+        self.irL_static_broadcaster = tf.TransformBroadcaster()
+        self.irR_static_broadcaster = tf.TransformBroadcaster()
         self.encoder_resolution = 1.0/1440.0
         self.last_encoder_measurementL = 0
         self.last_encoder_measurementR = 0
@@ -96,9 +94,9 @@ class botControl:
     def calibrate(self,LAvel,RAvel):
         """Takes in left and right angular velocities of wheels and outputs
         left and right PWM values."""
-        # Coefficients as calibrated
-        LPWM = int(8.52*abs(LAvel)+6.36)
-        RPWM = int(8.61*abs(RAvel)+6.08)
+        # Force angular velocities to ints and scale to 0-255
+        LPWM = int(11.608*abs(LAvel)+3.2461)
+        RPWM = int(11.134*abs(RAvel)+6.983)
 
         if(LPWM < 15):
             LPWM = 0 # Floor left
@@ -118,11 +116,10 @@ class botControl:
             over the xbee.
             """
         if(self.robot_mode == "HARDWARE_MODE"):
-            # Turn bot velocities into wheel velocities; keep as floats for now
+            # Keep as floats for now
             LAvel = (CmdVel.linear.x + CmdVel.angular.z * self.bot_radius) / self.wheel_radius
             RAvel = (CmdVel.linear.x - CmdVel.angular.z * self.bot_radius) / self.wheel_radius
 
-            # Turn desired wheel velocities into PWMs
             LPWM, RPWM = self.calibrate(LAvel, RAvel)
 
             # Invert direction so +x is forward
@@ -155,10 +152,14 @@ class botControl:
 
             data = update['rf_data'].decode().split(' ')[:-1]
             data = [int(x) for x in data]
-            # Encoder readings as radians: l, r
-            encoder_measurements = [x * math.pi / 720 for x in [data[-1], data[-2]]]
+            encoder_measurements = [x * math.pi / 720 for x in data[-2:]] #encoder readings as radians, 2d array
+            encoder_measurements[0] = data[-1] * math.pi / 720 #encoder readings as radians, 2d array
+            encoder_measurements[1] = data[-2] * math.pi / 720 #encoder readings as radians, 2d array
 
-            # Calculate how many radians the encoders have moved since the last odom measurement
+            print("encoders: "+str(encoder_measurements[0]) + ' ' + str(encoder_measurements[1]))
+
+            #how about velocity?
+            time_diff = rospy.Time.now() - self.time
             self.diffEncoderL = encoder_measurements[0] - self.last_encoder_measurementL
             self.diffEncoderR = encoder_measurements[1] - self.last_encoder_measurementR
 
@@ -167,7 +168,7 @@ class botControl:
                 self.diffEncoderL = 0
                 self.diffEncoderR = 0
 
-            # Calculate changes in theta and distance with respect to the robot frame
+
             del_theta = ((self.diffEncoderR - self.diffEncoderL) * self.wheel_radius)/(2 * self.bot_radius)
             del_s = ((self.diffEncoderR + self.diffEncoderL) * self.wheel_radius)/2
 
@@ -176,7 +177,7 @@ class botControl:
             self.Odom.pose.pose.position.y += del_s * math.sin(self.bot_angle + del_theta/2)
 
             self.Odom.pose.pose.position.z = .0
-            self.bot_angle += del_theta
+            self.bot_angle += del_theta/2
             self.bot_angle = self.bot_angle % (2*math.pi) # Loop
             quat = quaternion_from_euler(.0, .0, self.bot_angle)
             self.Odom.pose.pose.orientation.x = quat[0]
@@ -184,7 +185,8 @@ class botControl:
             self.Odom.pose.pose.orientation.z = quat[2]
             self.Odom.pose.pose.orientation.w = quat[3]
 
-            # https://wiki.ros.org/tf/Tutorials/Writing%20a%20tf%20broadcaster%20%28Python%29
+
+            # #https://wiki.ros.org/tf/Tutorials/Writing%20a%20tf%20broadcaster%20%28Python%29
             self.odom_broadcaster.sendTransform(
                 (self.Odom.pose.pose.position.x, self.Odom.pose.pose.position.y, .0),
                 tf.transformations.quaternion_from_euler(.0, .0, self.bot_angle),
@@ -193,41 +195,61 @@ class botControl:
                 self.Odom.header.frame_id,
             )
 
-            self.pubOdom.publish(self.Odom) # Publish in /odom topic
+            self.irF_static_broadcaster.sendTransform(
+                (0.08, 0.0, 0.09),
+                tf.transformations.quaternion_from_euler(.0, math.pi/2.0, .0),
+                rospy.Time.now(),
+                "/ir1",
+                "/base_link"
+            )
 
-            range_measurements = data[:-2] # Range readings (there are 3)
-            self.pubRangeSensor(range_measurements)
+            self.irL_static_broadcaster.sendTransform(
+                (0.0, 0.06, 0.09),
+                tf.transformations.quaternion_from_euler(-math.pi/2.0, math.pi/2.0, .0),
+                rospy.Time.now(),
+                "/ir2",
+                "/base_link"
+            )
+
+            self.irR_static_broadcaster.sendTransform(
+                (0.0, -0.06, 0.09),
+                tf.transformations.quaternion_from_euler(math.pi/2.0, math.pi/2.0, .0),
+                rospy.Time.now(),
+                "/ir3",
+                "/base_link"
+            )
+
+            self.pubOdom.publish(self.Odom) #we publish in /odom topic
+
+            #about range sensors, update here
+            range_measurements = data[:-2] #range readings are here, 3d array
+            #self.pubRangeSensor(range_measurements)
 
         if(self.data_logging):
             self.log_data();
 
         self.time = rospy.Time.now()
 
-    def ir_cal(self, val):
-        """Convert ir sensor data to meters. The effective range of our sensors
-        is from .2m to 1.5m. The best fit at this range was a power curve."""
-        if(val == 0): # Prevent division by 0
-            return 0
-        return 242.76 * (val ** -1.075)
+    # def pubRangeSensor(self,ranges):
 
-    def pubRangeSensor(self, ranges):
-        """Publish the sensor recordings"""
-        self.ir_L.distance = self.ir_cal(ranges[1])
-        self.ir_C.distance = self.ir_cal(ranges[0])
-        self.ir_R.distance = self.ir_cal(ranges[2])
+    #     #May be you want to calibrate them now? Make a new function called "ir_cal"
+    #     self.ir_L.distance = ir_cal(ranges[0])
+    #     self.ir_C.distance = ir_cal(ranges[1])
+    #     self.ir_R.distance = ir_cal(ranges[2])
 
-        self.pubDistL.publish(self.ir_L)
-        self.pubDistC.publish(self.ir_C)
-        self.pubDistR.publish(self.ir_R)
+    #     self.pubDistL.publish(self.ir_L)
+    #     self.pubDistC.publish(self.ir_C)
+    #     self.pubDistR.publish(self.ir_R)
 
     def make_headers(self):
-        """Makes necessary headers for log file."""
+        """Makes necesary headers for log file."""
         f = open(rospack.get_path('e190_bot')+"/data/"+self.file_name, 'a+')
-        f.write('{0} {1:^1} {2:^1} {3:^1} {4:^1} {5:^1} \n'.format('TIME','X','Y','LIR','CIR','RIR'))
+        # f.write('{0} {1:^1} {2:^1} {3:^1} {4:^1} \n'.format('R1', 'R2', 'R3', 'RW', 'LW'))
+        f.write('{0} {1:^1} {2:^1} \n'.format('TIME','X','Y'))
         f.close()
 
     def log_pwm(self, LPWM, RPWM):
-        """Logs PWM changes for manual calibration."""
+        """Logs PWM changes for calibration."""
         f = open(rospack.get_path('e190_bot')+"/data/"+self.file_name, 'a+')
 
         data = [str(x) for x in ["------------------PWM-IS-NOW",LPWM,RPWM]]
@@ -239,7 +261,8 @@ class botControl:
         """Logs data for debugging reference."""
         f = open(rospack.get_path('e190_bot')+"/data/"+self.file_name, 'a+')
 
-        data = [str(x) for x in [self.time,self.Odom.pose.pose.position.x,self.Odom.pose.pose.position.y,self.ir_L.distance,self.ir_C.distance,self.ir_R.distance]]
+        data = [str(x) for x in [self.time,self.Odom.pose.pose.position.x,self.Odom.pose.pose.position.y]]
+        # data = [str(x) for x in [self.time,self.diffEncoderL,self.diffEncoderR]]
 
         f.write(' '.join(data) + '\n')
         f.close()

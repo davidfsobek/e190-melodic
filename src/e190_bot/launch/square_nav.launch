@@ -3,8 +3,9 @@
   <arg name="rviz_cfg" default="-d ~/Projects/e190melodic_ws/src/e190_bot/params/rviz/labs.rviz"/>
 
 
- <node pkg="e190" name="bot" type="control.py"/>
- <node pkg="e190" name="Square_nav" type="robotDoLoop.py"/>
+ <node pkg="e190_bot" name="bot" type="control.py"/>
+ <!-- <node pkg="e190_bot" name="simple_tf_listener" type="simple_tf_listener.py"/> -->
+ <!-- <node pkg="e190_bot" name="Square_nav" type="robotDoLoop.py"/> -->
  <node pkg="rviz" type="rviz" name="rviz" />
 
 </launch>
